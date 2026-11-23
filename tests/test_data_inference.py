@@ -12,6 +12,8 @@ from fongbe_asr.infer import ordered_test
 from fongbe_asr.model import AcousticModel
 from fongbe_asr.syllables import syllabifier
 from fongbe_asr.synthetic import FIELDS, generate
+from fongbe_asr.text import Vocabulary
+from fongbe_asr.train import init_model
 
 
 def test_corpus_uses_official_schema_and_speaker_holdout(tmp_path):
@@ -38,6 +40,20 @@ def test_official_hook_calls_the_local_module(tmp_path):
     script.write_text("def syllabify(text):\n    return text + ' hook'\n", encoding="utf-8")
     with syllabifier(script) as transform:
         assert transform("ɛ́") == "ɛ́ hook"
+
+
+def test_training_can_initialize_from_matching_checkpoint(tmp_path):
+    vocab = Vocabulary(["<blank>", "ɛ́", "ɔ́"])
+    model = AcousticModel(len(vocab.units), width=8)
+    checkpoint = tmp_path / "acoustic.pt"
+    torch.save(dict(version=1, width=8, units=vocab.units, model=model.state_dict()), checkpoint)
+    restored = init_model(vocab, 8, checkpoint)
+    for name, weight in model.state_dict().items():
+        torch.testing.assert_close(restored.state_dict()[name], weight)
+    with pytest.raises(ValueError, match="Checkpoint width"):
+        init_model(vocab, 9, checkpoint)
+    with pytest.raises(ValueError, match="Checkpoint vocabulary"):
+        init_model(Vocabulary(["<blank>", "ɔ́", "ɛ́"]), 8, checkpoint)
 
 
 def test_inference_subprocess_writes_ordered_syllabified_csv(tmp_path):

@@ -11,7 +11,7 @@ from .audio import features, read_audio
 from .data import training_split
 from .decode import BigramLM, greedy
 from .metric import edit_distance
-from .model import AcousticModel
+from .model import AcousticModel, load_model
 from .text import Vocabulary, graphemes, normalize
 
 
@@ -76,6 +76,17 @@ def validate(model, vocab, loader, device):
     return errors / total
 
 
+def init_model(vocab, width, checkpoint):
+    if checkpoint is None:
+        return AcousticModel(len(vocab.units), width)
+    model, units = load_model(checkpoint)
+    if units != vocab.units:
+        raise ValueError("Checkpoint vocabulary does not match the training vocabulary")
+    if model.encoder.proj.out_channels != width:
+        raise ValueError("Checkpoint width does not match --width")
+    return model
+
+
 def train(args):
     torch.set_num_threads(args.threads)
     torch.manual_seed(args.seed)
@@ -86,14 +97,14 @@ def train(args):
     vocab = Vocabulary.from_texts(row["transcription"] for row in rows)
     if len(vocab.units) < 2:
         raise ValueError("Training transcriptions are empty")
+    device = torch.device(args.device)
+    model = init_model(vocab, args.width, args.init_checkpoint).to(device)
     args.output.mkdir(parents=True, exist_ok=True)
     BigramLM.fit((vocab.encode(row["transcription"]) for row in rows), args.output / "lm.json")
     opts = dict(num_workers=args.workers, collate_fn=collate, persistent_workers=args.workers > 0)
     loader = DataLoader(SpeechDataset(rows, args.audio_root),
                         batch_sampler=DurationBatches(rows, args.batch_size, rng), **opts)
     dev = DataLoader(SpeechDataset(dev_rows, args.audio_root), batch_size=args.batch_size, **opts)
-    device = torch.device(args.device)
-    model = AcousticModel(len(vocab.units), args.width).to(device)
     loss_fn = nn.CTCLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
     best = float("inf")
@@ -128,6 +139,8 @@ def main():
     parser.add_argument("--auxiliary", type=Path, action="append", default=[])
     parser.add_argument("--audio-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--init-checkpoint", type=Path,
+                        help="Start from matching acoustic weights with a fresh optimizer")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=16)

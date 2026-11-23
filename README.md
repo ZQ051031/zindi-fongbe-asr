@@ -55,6 +55,17 @@ Zindi scores edits on **syllable** tokens, not orthographic words. For example, 
 
 For the organizer's separate local diagnostics, save the speaker-held-out rows returned by `fongbe_asr.data.training_split` as a validation CSV. Decode that CSV with `fongbe_asr.infer`, omitting both `--sample-submission` and `--syllabify` to retain plain tone-marked text. Run the organizer's `test_score.py` and pass the validation CSV and these **plain** predictions to `python score.py --reference validation.csv --submission dev_predictions.csv`. The tool reports its local score, TSER, and conditional TER; neither this score nor the local weighted estimator is a leaderboard result.
 
+### Reliable-data validation
+
+Both runs used only the reliable set, with the same 2,396 validation recordings from 14 held-out speakers. CPU training used width 96, batch size 64, eight PyTorch threads, four data workers, and `OMP_WAIT_POLICY=PASSIVE`. Validation inference used the default beam decoder and the training grapheme bigram LM.
+
+| Checkpoint | Organizer score | TSER | Conditional TER |
+| --- | ---: | ---: | ---: |
+| Reliable, two epochs from scratch (learning rate 0.002, seed 2026) | 0.4676 | 0.5917 | 0.1780 |
+| Stage A, two more reliable epochs (learning rate 0.001, seed 2028) | 0.4101 | 0.5199 | 0.1541 |
+
+To continue from an existing acoustic model, add `--init-checkpoint /path/to/acoustic.pt` to the training command and set `--epochs` to the number of additional epochs. Set `--width` to the checkpoint width and use data with the same grapheme vocabulary. Stage A started from the two-epoch checkpoint with a fresh AdamW optimizer because the original checkpoint saved only model weights.
+
 ## Benchmark
 
 Repeat the same inference command with `python -m fongbe_asr.benchmark` in place of `python -m fongbe_asr.infer`. It checks total checkpoint and LM bytes (decimal units), pins the fresh process to one logical CPU, caps the math and PyTorch thread pools to one, disables CUDA, and blocks network socket creation with Linux seccomp. The benchmark requires the socket probe to fail before inference starts. Wall time includes heavyweight imports, weight loading, audio I/O, feature extraction, decoding, syllabification and CSV output; RTF is wall time divided by corpus audio time. Peak RSS is the OS process high-water mark, including the loaded runtime and model. It returns a nonzero status if weights exceed 1,000 MB, RTF exceeds 1, or peak RSS exceeds 2 GB.
