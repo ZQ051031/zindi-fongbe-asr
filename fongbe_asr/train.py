@@ -76,15 +76,24 @@ def validate(model, vocab, loader, device):
     return errors / total
 
 
-def init_model(vocab, width, checkpoint):
+def init_model(vocab, width, checkpoint, expand_vocabulary=False):
     if checkpoint is None:
         return AcousticModel(len(vocab.units), width)
     model, units = load_model(checkpoint)
-    if units != vocab.units:
-        raise ValueError("Checkpoint vocabulary does not match the training vocabulary")
     if model.encoder.proj.out_channels != width:
         raise ValueError("Checkpoint width does not match --width")
-    return model
+    if units == vocab.units:
+        return model
+    if not expand_vocabulary or not set(units) < set(vocab.units):
+        raise ValueError("Checkpoint vocabulary does not match the training vocabulary")
+    expanded = AcousticModel(len(vocab.units), width)
+    expanded.encoder.load_state_dict(model.encoder.state_dict())
+    positions = {unit: i for i, unit in enumerate(vocab.units)}
+    indices = [positions[unit] for unit in units]
+    with torch.no_grad():
+        expanded.classifier.weight[indices] = model.classifier.weight
+        expanded.classifier.bias[indices] = model.classifier.bias
+    return expanded
 
 
 def train(args):
@@ -98,7 +107,7 @@ def train(args):
     if len(vocab.units) < 2:
         raise ValueError("Training transcriptions are empty")
     device = torch.device(args.device)
-    model = init_model(vocab, args.width, args.init_checkpoint).to(device)
+    model = init_model(vocab, args.width, args.init_checkpoint, args.expand_checkpoint_vocabulary).to(device)
     args.output.mkdir(parents=True, exist_ok=True)
     BigramLM.fit((vocab.encode(row["transcription"]) for row in rows), args.output / "lm.json")
     opts = dict(num_workers=args.workers, collate_fn=collate, persistent_workers=args.workers > 0)
@@ -141,6 +150,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--init-checkpoint", type=Path,
                         help="Start from matching acoustic weights with a fresh optimizer")
+    parser.add_argument("--expand-checkpoint-vocabulary", action="store_true",
+                        help="Allow new training graphemes when initializing from a checkpoint")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -154,6 +165,8 @@ def main():
     args = parser.parse_args()
     if min(args.epochs, args.batch_size, args.width, args.threads) < 1:
         parser.error("epochs, batch-size, width and threads must be positive")
+    if args.expand_checkpoint_vocabulary and args.init_checkpoint is None:
+        parser.error("--expand-checkpoint-vocabulary requires --init-checkpoint")
     train(args)
 
 

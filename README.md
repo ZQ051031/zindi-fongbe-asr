@@ -55,16 +55,19 @@ Zindi scores edits on **syllable** tokens, not orthographic words. For example, 
 
 For the organizer's separate local diagnostics, save the speaker-held-out rows returned by `fongbe_asr.data.training_split` as a validation CSV. Decode that CSV with `fongbe_asr.infer`, omitting both `--sample-submission` and `--syllabify` to retain plain tone-marked text. Run the organizer's `test_score.py` and pass the validation CSV and these **plain** predictions to `python score.py --reference validation.csv --submission dev_predictions.csv`. The tool reports its local score, TSER, and conditional TER; neither this score nor the local weighted estimator is a leaderboard result.
 
-### Reliable-data validation
+### Real-data validation
 
-Both runs used only the reliable set, with the same 2,396 validation recordings from 14 held-out speakers. CPU training used width 96, batch size 64, eight PyTorch threads, four data workers, and `OMP_WAIT_POLICY=PASSIVE`. Validation inference used the default beam decoder and the training grapheme bigram LM.
+All runs used the same 2,396 reliable validation recordings from 14 held-out speakers. CPU training used width 96, batch size 64, eight PyTorch threads, four data workers, and `OMP_WAIT_POLICY=PASSIVE`. Validation inference used the default beam decoder and a grapheme bigram LM fitted to each run's training transcripts.
 
 | Checkpoint | Organizer score | TSER | Conditional TER |
 | --- | ---: | ---: | ---: |
 | Reliable, two epochs from scratch (learning rate 0.002, seed 2026) | 0.4676 | 0.5917 | 0.1780 |
 | Stage A, two more reliable epochs (learning rate 0.001, seed 2028) | 0.4101 | 0.5199 | 0.1541 |
+| Stage B, one epoch on reliable + uncertain (learning rate 0.0005, seed 2030) | 0.4038 | 0.5123 | 0.1508 |
 
-To continue from an existing acoustic model, add `--init-checkpoint /path/to/acoustic.pt` to the training command and set `--epochs` to the number of additional epochs. Set `--width` to the checkpoint width and use data with the same grapheme vocabulary. Stage A started from the two-epoch checkpoint with a fresh AdamW optimizer because the original checkpoint saved only model weights.
+To continue from an existing acoustic model, add `--init-checkpoint /path/to/acoustic.pt` to the training command and set `--epochs` to the number of additional epochs. Set `--width` to the checkpoint width. For a larger vocabulary that retains every existing grapheme, add `--expand-checkpoint-vocabulary`; this preserves the encoder and existing classifier rows by grapheme and initializes the new rows. The checkpoint saves model weights only, so both continuations used a fresh AdamW optimizer.
+
+Stage B started from the Stage A checkpoint and used 47,927 reliable training recordings and 69,423 uncertain recordings passed through `--auxiliary`. The speaker holdout applied to both sources. Two uncertain rows were excluded because their transcripts required more CTC frames than the audio could produce. One mixed epoch took about 9 h 10 min; a second would not fit the budget. On the full test set, the organizer's frugality script measured 0.0231 RTF on one CPU thread, 1,435,705 bytes of weights, and 425,025,536 bytes peak RAM, with the network cut.
 
 ## Benchmark
 

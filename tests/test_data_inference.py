@@ -56,6 +56,24 @@ def test_training_can_initialize_from_matching_checkpoint(tmp_path):
         init_model(Vocabulary(["<blank>", "ɔ́", "ɛ́"]), 8, checkpoint)
 
 
+def test_training_can_expand_checkpoint_vocabulary(tmp_path):
+    units = ["<blank>", "ɛ́", "ɔ́"]
+    model = AcousticModel(len(units), width=8)
+    checkpoint = tmp_path / "acoustic.pt"
+    torch.save(dict(version=1, width=8, units=units, model=model.state_dict()), checkpoint)
+    wider = Vocabulary(["<blank>", "a", "ɛ́", "ɔ́"])
+    with pytest.raises(ValueError, match="Checkpoint vocabulary"):
+        init_model(wider, 8, checkpoint)
+    restored = init_model(wider, 8, checkpoint, expand_vocabulary=True)
+    assert restored.classifier.out_features == 4
+    for name, weight in model.encoder.state_dict().items():
+        torch.testing.assert_close(restored.encoder.state_dict()[name], weight)
+    torch.testing.assert_close(restored.classifier.weight[[0, 2, 3]], model.classifier.weight)
+    torch.testing.assert_close(restored.classifier.bias[[0, 2, 3]], model.classifier.bias)
+    with pytest.raises(ValueError, match="Checkpoint vocabulary"):
+        init_model(Vocabulary(["<blank>", "ɛ́", "a", "b"]), 8, checkpoint, expand_vocabulary=True)
+
+
 def test_inference_subprocess_writes_ordered_syllabified_csv(tmp_path):
     generate(tmp_path, n_train=1, n_dev=1, n_test=2, seed=12)
     model = AcousticModel(2, width=8)
