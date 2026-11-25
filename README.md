@@ -57,17 +57,25 @@ For the organizer's separate local diagnostics, save the speaker-held-out rows r
 
 ### Real-data validation
 
-All runs used the same 2,396 reliable validation recordings from 14 held-out speakers. CPU training used width 96, batch size 64, eight PyTorch threads, four data workers, and `OMP_WAIT_POLICY=PASSIVE`. Validation inference used the default beam decoder and a grapheme bigram LM fitted to each run's training transcripts.
+All runs used the same 2,396 reliable validation recordings from 14 held-out speakers. CPU training used width 96, batch size 64, eight PyTorch threads, four data workers, and `OMP_WAIT_POLICY=PASSIVE`. Validation inference used a grapheme bigram LM fitted to the training transcripts and the default beam decoder unless noted below.
 
 | Checkpoint | Organizer score | TSER | Conditional TER |
 | --- | ---: | ---: | ---: |
 | Reliable, two epochs from scratch (learning rate 0.002, seed 2026) | 0.4676 | 0.5917 | 0.1780 |
 | Stage A, two more reliable epochs (learning rate 0.001, seed 2028) | 0.4101 | 0.5199 | 0.1541 |
 | Stage B, one epoch on reliable + uncertain (learning rate 0.0005, seed 2030) | 0.4038 | 0.5123 | 0.1508 |
+| Stage C, one more mixed epoch (learning rate 0.00025, seed 2031), default decoder | 0.3890 | 0.4944 | 0.1432 |
+| Stage C, same checkpoint, wider decoder | **0.3882** | **0.4931** | 0.1433 |
 
-To continue from an existing acoustic model, add `--init-checkpoint /path/to/acoustic.pt` to the training command and set `--epochs` to the number of additional epochs. Set `--width` to the checkpoint width. For a larger vocabulary that retains every existing grapheme, add `--expand-checkpoint-vocabulary`; this preserves the encoder and existing classifier rows by grapheme and initializes the new rows. The checkpoint saves model weights only, so both continuations used a fresh AdamW optimizer.
+To continue from an existing acoustic model, add `--init-checkpoint /path/to/acoustic.pt` to the training command and set `--epochs` to the number of additional epochs. Set `--width` to the checkpoint width. For a larger vocabulary that retains every existing grapheme, add `--expand-checkpoint-vocabulary`; this preserves the encoder and existing classifier rows by grapheme and initializes the new rows. The checkpoint saves model weights only, so each continuation used a fresh AdamW optimizer.
 
 Stage B started from the Stage A checkpoint and used 47,927 reliable training recordings and 69,423 uncertain recordings passed through `--auxiliary`. The speaker holdout applied to both sources. Two uncertain rows were excluded because their transcripts required more CTC frames than the audio could produce. One mixed epoch took about 9 h 10 min; a second would not fit the budget. On the full test set, the organizer's frugality script measured 0.0231 RTF on one CPU thread, 1,435,705 bytes of weights, and 425,025,536 bytes peak RAM, with the network cut.
+
+On Stage B, the organizer's alignment matched 38,616 syllable bases and counted 5,822 tone errors. The largest reference → prediction confusions were high → unmarked (2,198), unmarked → high (1,879), rising → unmarked (706), and rising → high (436). These counts exclude syllable bases that did not align.
+
+Decoder tuning reused the fixed holdout for selection, so the comparison is not an independent test result. On the Stage B checkpoint, the sweep tried LM weights 0, 0.075, 0.25 and 0.35 at beam width 8 / token top-k 10, and 0.075, 0.15 and 0.25 at width 16 / top-k 16. The best decoder-only score was 0.4027 at width 16 / top-k 16 and weight 0.15, short of the 0.3988 promotion threshold.
+
+Stage C resumed from Stage B on the same mixed manifests with no vocabulary expansion and completed one CPU epoch in about 5 h 13 min. The LM was unchanged. For the selected checkpoint, add `--beam-width 16 --token-topk 16 --lm-weight 0.15` to both the inference and benchmark commands. The organizer's full-test frugality run reported 0.0308 RTF on one CPU thread, 1,435,705 bytes of weights, and 424,894,464 bytes peak RAM, with the network cut. All 9,407 submission IDs matched the sample order and there were no missing, extra, or empty targets.
 
 ## Benchmark
 
